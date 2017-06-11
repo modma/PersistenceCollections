@@ -1,0 +1,27 @@
+﻿Records: 100000 items
+
+Memory:
+	ProtoBuffer: (20mb)
+		data: 61559
+		buffered: 14282
+		renderList: 1145
+		chunk: 25981
+		size: 11922
+
+	.Net: (100mb)
+		data: 61561
+		buffered: 32794
+		renderList: 4220
+		chunk: 43727
+		size: 29987
+
+Streamed:
+	ProtoBuffer:
+		buffered: 90913
+		chunk: 44289
+		size: 73054
+
+	.Net:
+		buffered: 110314
+		chunk: 76542
+		size: 72686
