@@ -227,7 +227,7 @@ namespace PersistenceList
         public int GetIndexByKey(TKey key)
         {
             int index;
-            if (!persistenceIndexes.TryGetValue(key, out index)) return -1;
+            if (!persistenceIndexes.TryGetValue(key, out index)) index = -1;
             return index;
         }
 

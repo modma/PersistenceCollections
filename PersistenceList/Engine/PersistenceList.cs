@@ -24,6 +24,7 @@ namespace PersistenceList
         private readonly string temporalFile = null;
         private readonly object locker = new object();
         private readonly static TempFileCollection tfc = null;
+        protected readonly CompressionMode useCompression;
 
         //Persistent Conection
         private readonly bool liveOpen;
@@ -39,18 +40,19 @@ namespace PersistenceList
             //GC.KeepAlive(tfc);
         }
 
-        public PersistenceList(bool doSecure = false, bool liveOpen = true)
-            : this(null, doSecure)
+        public PersistenceList(bool doSecure = false, bool liveOpen = true, CompressionMode compression = CompressionMode.NoCompression)
+            : this(null, doSecure, liveOpen, compression)
         {
         }
 
-        public PersistenceList(Stream connectionStream, bool doSecure = false, bool liveOpen = true)
+        public PersistenceList(Stream connectionStream, bool doSecure = false, bool liveOpen = true, CompressionMode compression = CompressionMode.NoCompression)
         {
             if (!this.IsSerializable(typeof(T))) throw new System.Runtime.Serialization.SerializationException("The class is not serializable");
 
             temporalFile = Path.GetTempFileName();
             tfc.AddFile(temporalFile, false);
             this.liveOpen = liveOpen;
+            this.useCompression = compression;
 
             if (doSecure)
             {
@@ -189,7 +191,7 @@ namespace PersistenceList
             {
                 using (MemoryStream ms = new MemoryStream())
                 {
-                    this.Serialize(ms, obj);
+                    this.DeltaCreate(ms, obj);
                     ms.Seek(0, SeekOrigin.Begin);
                     this.StoreData(key, ms, insertAt);
                 }
@@ -305,7 +307,7 @@ namespace PersistenceList
             using (Stream ms = this.GetStream(key))
             {
                 if (ms == null || ms.Length == 0) return default(T);
-                return this.Deserialize(ms);
+                return this.DeltaApply(ms);
             }
         }
 
@@ -331,6 +333,17 @@ namespace PersistenceList
                     return false;
                 }
             });
+        }
+
+        private void DeltaCreate(Stream deltaStream, T graph)
+        {
+            if (useCompression == CompressionMode.NoCompression) this.Serialize(deltaStream, graph);
+            else using (var compressionStream = DoCompress(deltaStream)) this.Serialize(compressionStream, graph);
+        }
+
+        private T DeltaApply(Stream deltaStream)
+        {
+            using (var compressionStream = DoDecompress(deltaStream)) return this.Deserialize(compressionStream);
         }
 
         public DataTable ListElements()
@@ -375,6 +388,63 @@ namespace PersistenceList
         {
             if (formatter == null) formatter = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter();
             return (T)formatter.Deserialize(serializationStream);
+        }
+
+        #endregion
+
+        #region Compression
+
+        private Stream DoCompress(Stream input)
+        {
+            switch (useCompression)
+            {
+                case CompressionMode.LZ4Fast:
+                    return new Lz4Net.Lz4CompressionStream(input, Lz4Net.Lz4Mode.Fast, false);
+                case CompressionMode.LZ4Max:
+                    return new Lz4Net.Lz4CompressionStream(input, Lz4Net.Lz4Mode.HighCompression, false);
+                case CompressionMode.DeflateFast:
+                    return new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionLevel.Fastest, true);
+                case CompressionMode.DeflateMax:
+                    return new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionLevel.Optimal, true);
+                case CompressionMode.GZipFast:
+                    return new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionLevel.Fastest, true);
+                case CompressionMode.GzipMax:
+                    return new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionLevel.Optimal, true);
+                case CompressionMode.Custom:
+                    return CustomCompress(input);
+                default:
+                    return input;
+            }
+        }
+
+        protected virtual Stream CustomCompress(Stream input)
+        {
+            throw new NotImplementedException("Must be override to use");
+        }
+
+        private Stream DoDecompress(Stream input)
+        {
+            switch (useCompression)
+            {
+                case CompressionMode.LZ4Fast:
+                case CompressionMode.LZ4Max:
+                    return new Lz4Net.Lz4DecompressionStream(input, true);
+                case CompressionMode.DeflateFast:
+                case CompressionMode.DeflateMax:
+                    return new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress, false);
+                case CompressionMode.GZipFast:
+                case CompressionMode.GzipMax:
+                    return new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress, false);
+                case CompressionMode.Custom:
+                    return CustomDecompress(input);
+                default:
+                    return input;
+            }
+        }
+
+        protected virtual Stream CustomDecompress(Stream input)
+        {
+            throw new NotImplementedException("Must be override to use");
         }
 
         #endregion
@@ -426,7 +496,7 @@ namespace PersistenceList
                         command.CommandText = "SELECT id-1 from datastore WHERE data = @data ORDER BY id;";
                         using (var ms = new MemoryStream())
                         {
-                            this.Serialize(ms, item);
+                            this.DeltaCreate(ms, item);
                             //ms.Seek(0, SeekOrigin.Begin);
                             command.Parameters.Add(new SQLiteParameter("@data", ms.ToArray()));
                         }
@@ -507,7 +577,7 @@ namespace PersistenceList
                                 {
                                     using (var ms = new MemoryStream())
                                     {
-                                        this.Serialize(ms, e);
+                                        this.DeltaCreate(ms, e);
                                         var buffer = ms.ToArray();
                                         command.Parameters.Add(new SQLiteParameter(variable, buffer));
                                         dataSize += buffer.Length;
@@ -548,7 +618,7 @@ namespace PersistenceList
                                     {
                                         using (var ms = new MemoryStream())
                                         {
-                                            this.Serialize(ms, e);
+                                            this.DeltaCreate(ms, e);
                                             //ms.Seek(0, SeekOrigin.Begin);
                                             return new SQLiteParameter(variable, ms.ToArray());
                                         }
@@ -693,7 +763,7 @@ namespace PersistenceList
                             {
                                 if (reader.IsDBNull(0)) yield return default(T);
                                 else using (var ms = reader.GetStream(0))
-                                        yield return this.Deserialize(ms);
+                                        yield return this.DeltaApply(ms);
                             }
                         }
                     }
@@ -710,6 +780,19 @@ namespace PersistenceList
 
         #endregion
     }
+
+    public enum CompressionMode
+    {
+        NoCompression,
+        Custom,
+        LZ4Fast,
+        LZ4Max,
+        DeflateFast,
+        DeflateMax,
+        GZipFast,
+        GzipMax
+    }
+
 
     #region Debug View
     internal sealed class PersistenceList_CollectionDebugView<T>
