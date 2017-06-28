@@ -49,6 +49,10 @@
       <HintPath>..\packages\Lz4.Net.1.0.98\lib\net45\Lz4Net.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="Newtonsoft.Json, Version=10.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>..\packages\Newtonsoft.Json.10.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="Polenter.SharpSerializer, Version=2.20.0.0, Culture=neutral, PublicKeyToken=8f4f20011571ee5f, processorArchitecture=MSIL">
       <HintPath>..\packages\SharpSerializer.2.20\lib\net20\Polenter.SharpSerializer.dll</HintPath>
       <Private>True</Private>
@@ -75,16 +79,21 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="DynamicTuple.cs" />
     <Compile Include="Engine\BufferCollection.cs">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Engine\PersistenceDictionary.cs" />
-    <Compile Include="Engine\PersistenceListSharpSerializer.cs" />
+    <Compile Include="Implementations\PersistenceListNewtonsoft.cs" />
+    <Compile Include="Implementations\PersistenceListXML.cs" />
+    <Compile Include="Implementations\PersistenceListSoap.cs" />
+    <Compile Include="Implementations\PersistenceListSharpSerializer.cs" />
+    <Compile Include="Implementations\PersistenceListJSON.cs" />
     <Compile Include="Entities\CustomerFlat.cs" />
     <Compile Include="Entities\Customer.cs" />
     <Compile Include="Entities\FakeCustomerDataRepository.cs" />
-    <Compile Include="Engine\PersistenceListWCF.cs" />
-    <Compile Include="Engine\PersistenceListProtoBuffer.cs" />
+    <Compile Include="Implementations\PersistenceListWCF.cs" />
+    <Compile Include="Implementations\PersistenceListProtoBuffer.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Engine\PersistenceList.cs" />

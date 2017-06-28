@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace PersistenceList
 {
@@ -10,25 +11,32 @@ namespace PersistenceList
         private Action<T[]> flushMethod;
         private T[] buffer;
         private readonly int bufferLength;
+        private readonly bool useTask;
+        private Task lockerTask = Task.Run(() => { });
         private int arrayIndex;
 
-        public BufferCollection(int bufferLength, Action<T[]> flushMethod)
+        public BufferCollection(int bufferLength, Action<T[]> flushMethod, bool useTask = false)
         {
             if (flushMethod == null || bufferLength < 1) throw new ArgumentNullException();
             this.arrayIndex = 0;
             this.flushMethod = flushMethod;
+            this.useTask = useTask;
             this.buffer = new T[this.bufferLength = bufferLength];
         }
 
         public void Add(T data)
         {
             if (flushMethod == null) throw new ObjectDisposedException(this.GetType().Name);
-            this.buffer[arrayIndex++] = data;
-            if (arrayIndex == this.bufferLength) this.Flush(false);
+            lock (lockerTask)
+            {
+                this.buffer[arrayIndex++] = data;
+                if (arrayIndex == this.bufferLength) this.Flush(false);
+            }
         }
 
         private void Flush(bool isFinal)
         {
+            if (useTask) lockerTask.Wait();
             if (isFinal)
             {
                 if (arrayIndex != 0)
@@ -39,9 +47,14 @@ namespace PersistenceList
             }
             else
             {
-                this.flushMethod(this.buffer);
+                Task newTask = null;
+                if (useTask) {
+                    T[] oldBuffer = this.buffer;
+                    newTask = new Task(() => this.flushMethod(oldBuffer));
+                } else this.flushMethod(this.buffer);
                 this.buffer = new T[this.bufferLength];
                 this.arrayIndex = 0;
+                if (newTask != null) (lockerTask = newTask).Start();
             }
         }
 
@@ -71,9 +84,12 @@ namespace PersistenceList
         public void Dispose()
         {
             if (flushMethod == null) throw new ObjectDisposedException(this.GetType().Name);
-            this.Flush(true);
-            flushMethod = null;
-            buffer = null;
+            lock (lockerTask)
+            {
+                this.Flush(true);
+                flushMethod = null;
+                buffer = null;
+            }
         }
     }
 }

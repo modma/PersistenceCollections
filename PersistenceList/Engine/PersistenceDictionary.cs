@@ -178,7 +178,7 @@ namespace PersistenceList
 
         #region Bulk Operations
 
-        public BufferCollection<KeyValuePair<TKey, TValue>> MakeBufferedAdd(bool bySize = true)
+        public BufferCollection<KeyValuePair<TKey, TValue>> MakeBufferedAdd(bool bySize = true, bool useTask = false)
         {
             return new BufferCollection<KeyValuePair<TKey, TValue>>(PersistenceList<TValue>.MAX_SQLITE_COMMAND_PARAMETERS, data => 
             {
@@ -196,13 +196,13 @@ namespace PersistenceList
                         throw e;
                     }
                 }
-            });
+            }, useTask);
         }
 
-        public void AddRange<TSource>(IEnumerable<TSource> source, Func<TSource, TKey> keySelector, Func<TSource, TValue> elementSelector, bool bySize = true)
+        public void AddRange<TSource>(IEnumerable<TSource> source, Func<TSource, TKey> keySelector, Func<TSource, TValue> elementSelector, bool bySize = true, bool useTask = false)
         {
             if (source == null || keySelector == null || elementSelector == null) throw new ArgumentNullException();
-            using (var buffer = this.MakeBufferedAdd(bySize))
+            using (var buffer = this.MakeBufferedAdd(bySize, useTask))
                 foreach (var e in source) buffer.Add(new KeyValuePair<TKey, TValue>(keySelector(e), elementSelector(e)));
         }
 

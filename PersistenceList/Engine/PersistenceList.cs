@@ -100,6 +100,27 @@ namespace PersistenceList
             }
         }
 
+        //http://stackoverflow.com/questions/8868119/find-all-parent-types-both-base-classes-and-interfaces
+        public static IEnumerable<Type> GetParentTypes(Type type = null)
+        {
+            // if null type, use the Genetric Type
+            if (type == null) type = typeof(T);
+
+            // return all implemented or inherited interfaces
+            foreach (var i in type.GetInterfaces())
+            {
+                yield return i;
+            }
+
+            // return all inherited types
+            var currentBaseType = type.BaseType;
+            while (currentBaseType != null)
+            {
+                yield return currentBaseType;
+                currentBaseType = currentBaseType.BaseType;
+            }
+        }
+
         private Tout MakeConnection<Tout>(Func<SQLiteConnection, Tout> execute)
         {
             if (_disposed) throw new ObjectDisposedException("Container");
@@ -636,9 +657,9 @@ namespace PersistenceList
             });
         }
 
-        public BufferCollection<T> MakeBufferedAdd(bool bySize = true)
+        public BufferCollection<T> MakeBufferedAdd(bool bySize = true, bool useTask = false)
         {
-            return new BufferCollection<T>(MAX_SQLITE_COMMAND_PARAMETERS, e => this.AddRange(e, bySize));
+            return new BufferCollection<T>(MAX_SQLITE_COMMAND_PARAMETERS, e => this.AddRange(e, bySize), useTask);
         }
 
         public void ForEach(Action<T> action)

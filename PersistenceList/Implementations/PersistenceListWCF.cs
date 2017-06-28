@@ -11,6 +11,22 @@ namespace PersistenceList
     {
         private DataContractSerializer formatter = null;
 
+        #region Contructors
+
+        public PersistenceListWCF(bool doSecure = false, bool liveOpen = true, CompressionMode compression = CompressionMode.NoCompression)
+            : this(null, doSecure, liveOpen, compression)
+        {
+        }
+
+        public PersistenceListWCF(System.IO.Stream connectionStream, bool doSecure = false, bool liveOpen = true, CompressionMode compression = CompressionMode.NoCompression)
+            : base(connectionStream, doSecure, liveOpen, compression)
+        {
+        }
+
+        #endregion
+
+        #region Overrides
+
         protected override bool IsSerializable(Type type)
         {
             try { return new DataContractSerializer(type) != null; }
@@ -28,6 +44,8 @@ namespace PersistenceList
             if (formatter == null) formatter = new DataContractSerializer(typeof(T));
             return (T)formatter.ReadObject(serializationStream);
         }
+
+        #endregion
 
         public override void Dispose()
         {
