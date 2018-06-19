@@ -1,12 +1,12 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.Serialization;
-using System.Security.Cryptography;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PersistenceList
 {
@@ -92,6 +92,14 @@ namespace PersistenceList
                 }
                 return ms.ToArray();
             }
+        }
+
+        public static byte[] ArrayCopy(byte[] inputBuffer, int bufferOffset, int? count = null)
+        {
+            int lenght = count ?? (inputBuffer.Length - bufferOffset);
+            var buf = new byte[lenght];
+            Buffer.BlockCopy(inputBuffer, bufferOffset, buf, 0, lenght);
+            return buf;
         }
 
         #region SOAP/XML Serialization
@@ -247,8 +255,501 @@ namespace PersistenceList
                 return (T)formatter.Deserialize(sm);
             }
         }
-
         #endregion SOAP/XML Serialization
 
+        #region GenericCast
+
+        private static readonly MethodInfo ToCastFn = ((Func<IEnumerable, IEnumerable<int>>)Enumerable.Cast<int>).Method.GetGenericMethodDefinition();
+        private static readonly Dictionary<Type, GenericCastDelegate> GenericCastCache = new Dictionary<Type, GenericCastDelegate>();
+        private delegate IEnumerable GenericCastDelegate(IEnumerable collection);
+        public static IEnumerable GenericCast(Type type, IEnumerable collection)
+        {
+            if (collection == null) return null;
+            GenericCastDelegate call;
+            lock (GenericCastCache)
+            {
+                if (!GenericCastCache.TryGetValue(type, out call)) call = null;
+                if (call == null)
+                {
+                    var nm = ToCastFn.MakeGenericMethod(new[] { type });
+                    GenericCastCache[type] = call = (GenericCastDelegate)nm.CreateDelegate(typeof(GenericCastDelegate));
+                }
+            }
+            return call(collection);
+        }
+
+        #endregion
+
+        #region EventHacker
+
+        // https://stackoverflow.com/questions/3783267/how-to-get-a-delegate-object-from-an-eventinfo
+
+        private static void ClearEventHandlers(object classInstance, string eventName)
+        {
+            if (classInstance == null || string.IsNullOrWhiteSpace(eventName)) throw new ArgumentNullException();
+            MulticastDelegate eh = GetEventHandler(classInstance, eventName);
+            if (eh != null)
+            {
+                var rEvent = classInstance.GetType().GetEvent(eventName, BindingFlags.Public
+                                                               | BindingFlags.NonPublic
+                                                               | BindingFlags.Instance);
+                foreach (Delegate ev in eh.GetInvocationList())
+                {
+                    rEvent.RemoveEventHandler(classInstance, ev);
+                }
+            }
+        }
+
+        private static MulticastDelegate GetEventHandler(object classInstance, string eventName)
+        {
+            Type classType = classInstance.GetType();
+            FieldInfo eventField = classType.GetField(eventName, BindingFlags.GetField
+                                                               | BindingFlags.NonPublic
+                                                               | BindingFlags.Instance);
+
+            MulticastDelegate eventDelegate = (MulticastDelegate)eventField.GetValue(classInstance);
+
+            // eventDelegate will be null if no listeners are attached to the event
+            if (eventDelegate == null)
+            {
+                return null;
+            }
+
+            return eventDelegate;
+        }
+
+        public static IEnumerable<Tuple<EventInfo, MethodInfo>> GetSubscribedMethods(object obj)
+        {
+            Func<EventInfo, FieldInfo> ei2fi =
+                ei => obj.GetType().GetField(ei.Name,
+                    BindingFlags.NonPublic |
+                    BindingFlags.Instance |
+                    BindingFlags.GetField);
+
+            return from eventInfo in obj.GetType().GetEvents()
+                   let eventFieldInfo = ei2fi(eventInfo)
+                   let eventFieldValue = (System.Delegate)eventFieldInfo.GetValue(obj)
+                   from subscribedDelegate in (eventFieldValue?.GetInvocationList() ??
+                        Enumerable.Empty<System.Delegate>()).DefaultIfEmpty()
+                   select Tuple.Create(eventInfo, subscribedDelegate?.Method);
+        }
+
+        #endregion
+
     }
+
+    #region FixedCollections
+
+    //https://stackoverflow.com/questions/5852863/fixed-size-queue-which-automatically-dequeues-old-values-upon-new-enques
+
+    [Serializable]
+    public class FixedSizedQueue<T> : System.Collections.Concurrent.ConcurrentQueue<T>
+    {
+        private readonly object syncObject = new object();
+
+        public int Size { get; private set; }
+
+        public FixedSizedQueue(int size)
+        {
+            Size = size;
+        }
+
+        public new void Enqueue(T obj)
+        {
+            base.Enqueue(obj);
+            lock (syncObject)
+            {
+                while (base.Count > Size)
+                {
+                    T outObj;
+                    base.TryDequeue(out outObj);
+                }
+            }
+        }
+    }
+
+    [Serializable]
+    public class FixedSizedStack<T> : System.Collections.Concurrent.ConcurrentStack<T>
+    {
+        private readonly object syncObject = new object();
+
+        public int Size { get; private set; }
+
+        public FixedSizedStack(int size)
+        {
+            Size = size;
+        }
+
+        public new void Push(T obj)
+        {
+            base.Push(obj);
+            lock (syncObject)
+            {
+                while (base.Count > Size)
+                {
+                    T outObj;
+                    base.TryPop(out outObj);
+                }
+            }
+        }
+    }
+
+    [Serializable]
+    public class CircularBuffer<T> : IEnumerable<T>
+    {
+        readonly int size;
+        readonly object locker;
+
+        int count;
+        int head;
+        int rear;
+        T[] values;
+
+        public CircularBuffer(int max)
+        {
+            this.size = max;
+            locker = new object();
+            count = 0;
+            head = 0;
+            rear = 0;
+            values = new T[size];
+        }
+
+        static int Incr(int index, int size)
+        {
+            return (index + 1) % size;
+        }
+
+        private void UnsafeEnsureQueueNotEmpty()
+        {
+            if (count == 0)
+                throw new Exception("Empty queue");
+        }
+
+        public int Size { get { return size; } }
+        public object SyncRoot { get { return locker; } }
+
+        #region Count
+
+        public int Count { get { return UnsafeCount; } }
+        public int SafeCount { get { lock (locker) { return UnsafeCount; } } }
+        public int UnsafeCount { get { return count; } }
+
+        #endregion
+
+        #region Enqueue
+
+        public void Enqueue(T obj)
+        {
+            UnsafeEnqueue(obj);
+        }
+
+        public void SafeEnqueue(T obj)
+        {
+            lock (locker) { UnsafeEnqueue(obj); }
+        }
+
+        public void UnsafeEnqueue(T obj)
+        {
+            values[rear] = obj;
+
+            if (Count == Size)
+                head = Incr(head, Size);
+            rear = Incr(rear, Size);
+            count = Math.Min(count + 1, Size);
+        }
+
+        #endregion
+
+        #region Dequeue
+
+        public T Dequeue()
+        {
+            return UnsafeDequeue();
+        }
+
+        public T SafeDequeue()
+        {
+            lock (locker) { return UnsafeDequeue(); }
+        }
+
+        public T UnsafeDequeue()
+        {
+            UnsafeEnsureQueueNotEmpty();
+
+            T res = values[head];
+            values[head] = default(T);
+            head = Incr(head, Size);
+            count--;
+
+            return res;
+        }
+
+        #endregion
+
+        #region Peek
+
+        public T Peek()
+        {
+            return UnsafePeek();
+        }
+
+        public T SafePeek()
+        {
+            lock (locker) { return UnsafePeek(); }
+        }
+
+        public T UnsafePeek()
+        {
+            UnsafeEnsureQueueNotEmpty();
+
+            return values[head];
+        }
+
+        #endregion
+
+        #region GetEnumerator
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            return UnsafeGetEnumerator();
+        }
+
+        public IEnumerator<T> SafeGetEnumerator()
+        {
+            lock (locker)
+            {
+                List<T> res = new List<T>(count);
+                var enumerator = UnsafeGetEnumerator();
+                while (enumerator.MoveNext())
+                    res.Add(enumerator.Current);
+                return res.GetEnumerator();
+            }
+        }
+
+        public IEnumerator<T> UnsafeGetEnumerator()
+        {
+            int index = head;
+            for (int i = 0; i < count; i++)
+            {
+                yield return values[index];
+                index = Incr(index, size);
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+        {
+            return this.GetEnumerator();
+        }
+
+        #endregion
+    }
+
+    [Serializable]
+    public class ConcurrentDeck<T> : IEnumerable<T>
+    {
+        private readonly int _size;
+        private readonly T[] _buffer;
+        private int _position = 0;
+
+        public ConcurrentDeck(int size)
+        {
+            _size = size;
+            _buffer = new T[size];
+        }
+
+        public int Size { get { return _size; } }
+
+        public void Push(T item)
+        {
+            lock (this)
+            {
+                _buffer[_position] = item;
+                _position++;
+                if (_position == _size) _position = 0;
+            }
+        }
+
+        public T[] ReadDeck()
+        {
+            lock (this)
+            {
+                return _buffer.Skip(_position).Union(_buffer.Take(_position)).Where(e => e != null).ToArray();
+            }
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            return this.ReadDeck().AsEnumerable().GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return this.ReadDeck().GetEnumerator();
+        }
+    }
+
+    //https://social.msdn.microsoft.com/Forums/vstudio/en-US/789c37ea-b9bf-4512-a418-f4f9532c59bf/dictionary-with-limited-size?forum=csharpgeneral
+
+    [Serializable]
+    public class LimitedDictionary<TKey, TValue> : Dictionary<TKey, TValue>
+    {
+        public ReadOnlyDictionary<TKey, TValue> AsReadOnly()
+        {
+            return new ReadOnlyDictionary<TKey, TValue>(this);
+        }
+
+        public int MaxItemsToHold { get; set; }
+
+        private Queue<TKey> orderedKeys = new Queue<TKey>();
+
+        public new void Add(TKey key, TValue value)
+        {
+            orderedKeys.Enqueue(key);
+            if (this.MaxItemsToHold != 0 && this.Count >= MaxItemsToHold)
+            {
+                this.Remove(orderedKeys.Dequeue());
+            }
+
+            base.Add(key, value);
+        }
+    }
+
+    [Serializable]
+    public class LimitedSizeDictionary<TKey, TValue> : IDictionary<TKey, TValue>
+    {
+        Dictionary<TKey, TValue> dict;
+        Queue<TKey> queue;
+        int size;
+
+        public LimitedSizeDictionary(int size)
+        {
+            this.size = size;
+            dict = new Dictionary<TKey, TValue>(size + 1);
+            queue = new Queue<TKey>(size);
+        }
+
+        public ReadOnlyDictionary<TKey, TValue> AsReadOnly()
+        {
+            return new ReadOnlyDictionary<TKey, TValue>(dict);
+        }
+
+        public void Add(TKey key, TValue value)
+        {
+            dict.Add(key, value);
+            if (queue.Count == size)
+                dict.Remove(queue.Dequeue());
+            queue.Enqueue(key);
+        }
+
+        public bool Remove(TKey key)
+        {
+            if (dict.Remove(key))
+            {
+                Queue<TKey> newQueue = new Queue<TKey>(size);
+                foreach (TKey item in queue)
+                    if (!dict.Comparer.Equals(item, key))
+                        newQueue.Enqueue(item);
+                queue = newQueue;
+                return true;
+            }
+            else
+                return false;
+        }
+
+        public int Size { get { return size; } }
+
+        public TValue this[TKey key]
+        {
+            get
+            {
+                return dict[key];
+            }
+            set
+            {
+                if (dict.ContainsKey(key)) dict[key] = value;
+                else this.Add(key, value);
+            }
+        }
+
+        public int Count
+        {
+            get
+            {
+                return dict.Count;
+            }
+        }
+
+        public bool IsReadOnly
+        {
+            get
+            {
+                return ((IDictionary<TKey, TValue>)dict).IsReadOnly;
+            }
+        }
+
+        public ICollection<TKey> Keys
+        {
+            get
+            {
+                return dict.Keys;
+            }
+        }
+
+        public ICollection<TValue> Values
+        {
+            get
+            {
+                return dict.Values;
+            }
+        }
+
+        public void Add(KeyValuePair<TKey, TValue> item)
+        {
+            this.Add(item.Key, item.Value);
+        }
+
+        public void Clear()
+        {
+            dict.Clear();
+        }
+
+        public bool Contains(KeyValuePair<TKey, TValue> item)
+        {
+            return dict.Contains(item);
+        }
+
+        public bool ContainsKey(TKey key)
+        {
+            return dict.ContainsKey(key);
+        }
+
+        public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
+        {
+            ((IDictionary<TKey, TValue>)dict).CopyTo(array, arrayIndex);
+        }
+
+        public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
+        {
+            return dict.GetEnumerator();
+        }
+
+        public bool Remove(KeyValuePair<TKey, TValue> item)
+        {
+            return Remove(item.Key);
+        }
+
+        public bool TryGetValue(TKey key, out TValue value)
+        {
+            return dict.TryGetValue(key, out value);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return dict.GetEnumerator();
+        }
+    }
+
+    #endregion 
+
 }

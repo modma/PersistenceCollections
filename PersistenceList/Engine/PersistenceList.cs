@@ -431,11 +431,28 @@ namespace PersistenceList
                     return new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionLevel.Fastest, true);
                 case CompressionMode.GzipMax:
                     return new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionLevel.Optimal, true);
+                case CompressionMode.Brotli:
+                    return new Brotli.BrotliStream(input, System.IO.Compression.CompressionMode.Compress, true);
+                case CompressionMode.Lzf4:
+                    return new Noemax.Lzf.Lzf4OutputStream(input, true);
+                case CompressionMode.Lzma:
+                    return new Noemax.Lzma.LzmaOutputStream(input, 5, true, false);
+                case CompressionMode.BZip2:
+                    return new Noemax.BZip2.BZip2OutputStream(input, 5, true);
+                case CompressionMode.Zlib:
+                    return Noemax.Compression.ZlibCompression.CreateZlib().CreateOutputStream(input, 5, true);
+                case CompressionMode.QuickLZ:
+                    return new QuickLZ.QuickLZCompressionStream(input, true);
+                case CompressionMode.Snappy:
+                    return new Snappy.SnappyStream(input, System.IO.Compression.CompressionMode.Compress, true);
+                case CompressionMode.Rle:
+                    return new RleCompressionStream<RleCompressionHighBitRepeat>(input, false);
                 case CompressionMode.Custom:
                     return CustomCompress(input);
                 default:
                     return input;
             }
+            //in a future: https://github.com/centaurean/density
         }
 
         protected virtual Stream CustomCompress(Stream input)
@@ -456,6 +473,22 @@ namespace PersistenceList
                 case CompressionMode.GZipFast:
                 case CompressionMode.GzipMax:
                     return new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress, false);
+                case CompressionMode.Brotli:
+                    return new Brotli.BrotliStream(input, System.IO.Compression.CompressionMode.Decompress, false);
+                case CompressionMode.Lzf4:
+                    return new Noemax.Lzf.Lzf4InputStream(input, false);
+                case CompressionMode.Lzma:
+                    return new Noemax.Lzma.LzmaInputStream(input, false, false);
+                case CompressionMode.BZip2:
+                    return new Noemax.BZip2.BZip2InputStream(input, false);
+                case CompressionMode.Zlib:
+                    return Noemax.Compression.ZlibCompression.CreateZlib().CreateInputStream(input, false);
+                case CompressionMode.QuickLZ:
+                    return new QuickLZ.QuickLZDecompressionStream(input, false);
+                case CompressionMode.Snappy:
+                    return new Snappy.SnappyStream(input, System.IO.Compression.CompressionMode.Decompress, false);
+                case CompressionMode.Rle:
+                    return new RleDecompressionStream<RleCompressionHighBitRepeat>(input, true);
                 case CompressionMode.Custom:
                     return CustomDecompress(input);
                 default:
@@ -811,7 +844,15 @@ namespace PersistenceList
         DeflateFast,
         DeflateMax,
         GZipFast,
-        GzipMax
+        GzipMax,
+        Brotli,
+        Lzf4,
+        Lzma,
+        BZip2,
+        Zlib,
+        QuickLZ,
+        Snappy,
+        Rle
     }
 
 
