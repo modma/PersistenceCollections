@@ -13,6 +13,12 @@ namespace PersistenceList
 
         static void Main(string[] args)
         {
+            var byteFill = new byte[4096];
+            byteFill.Memset(255);
+            byteFill.Memzero();
+            byteFill.Memset(16, 127, 256);
+            byteFill.Memzero(32, 128);
+
             var testInstance = ProxyGeneratorAttributePropertyTest.CreateClassDecoratedWithAttribute<CustomerFlat>();
             var serialiced = FakeCustomerDataRepository.New(0).SerializeXML().Replace("Customer", testInstance.GetType().Name);
             testInstance = (CustomerFlat)serialiced.DeserializeXML(testInstance.GetType());//to use proxy type
