@@ -37,10 +37,19 @@ namespace PersistenceList
         public static void Memset(this byte[] array, int index, byte what, int length)
         {
             if (length == 0) return;
-            if (length < 0 || (array?.Length ?? 0) - index < length) throw new ArgumentOutOfRangeException();
-
-            var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(array, index);
-            MemsetDelegate(ptr, what, length);
+            if (length < 0 || (array?.Length ?? 0) - index < length) throw new ArgumentOutOfRangeException();          
+            // Pin the array to avoid Garbage collector moving it
+            GCHandle arrayHandle = GCHandle.Alloc(array, GCHandleType.Pinned);
+            try
+            {
+                var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(array, index);
+                MemsetDelegate(ptr, what, length);
+            }
+            finally
+            {
+                // Unpin the array
+                arrayHandle.Free();
+            }
         }
         public static void Memset(this byte[] array, byte what)
         {
