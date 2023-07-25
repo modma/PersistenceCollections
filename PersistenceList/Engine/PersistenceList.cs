@@ -9,6 +9,10 @@ using System.CodeDom.Compiler;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using System.Threading;
+using PersistenceList.Engine;
+using static PersistenceList.Engine.AsyncEnumerableExtensions;
 
 namespace PersistenceList
 {
@@ -133,6 +137,28 @@ namespace PersistenceList
                 }
                 if (liveCnn.State != ConnectionState.Open) liveCnn.Open();
                 var ret = execute(liveCnn);
+                if (!liveOpen) { liveCnn.Dispose(); liveCnn = null; }
+                return ret;
+            }
+        }
+
+        private async Task<Tout> MakeConnectionAsync<Tout>(Func<SQLiteConnection, Task<Tout>> execute)
+        {
+            if (_disposed) throw new ObjectDisposedException("Container");
+            Task<Tout> task = null;
+            lock (locker)
+            {
+                if (!liveOpen || liveCnn == null || liveCnn.State == ConnectionState.Broken || liveCnn.State == ConnectionState.Closed)
+                {
+                    liveCnn = new SQLiteConnection(this.GetConnectionString);
+                    this.SetConnectionPassword(liveCnn);
+                }
+                if (liveCnn.State != ConnectionState.Open) liveCnn.OpenAsync();
+                task = execute(liveCnn);
+            }
+            Tout ret = await task;
+            lock (locker)
+            {
                 if (!liveOpen) { liveCnn.Dispose(); liveCnn = null; }
                 return ret;
             }
@@ -587,6 +613,112 @@ namespace PersistenceList
         public void Add(T item)
         {
             StoreObject(null, item, false);
+        }
+
+        public async Task AddRangeAsync(IEnumerable<T> items, bool bySize = true, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (items == null) return;
+            if (!isInit) Inicialize();
+            await MakeConnectionAsync(async connection =>
+            {
+                Func<int, string> MakeCommand = (len) => string.Concat("INSERT INTO datastore VALUES",
+                    String.Join(",", Enumerable.Range(0, len).Select(n => string.Concat("(null, @data", n, ")")))
+                    , ";");
+
+                #region By size or parameter limit
+                if (bySize)
+                {
+                    using (var command = connection.CreateCommand())
+                    {
+                        int arrayIndex = 0;
+                        long dataSize = 0;
+                        command.CommandType = CommandType.Text;
+                        Func<int> Flush = () =>
+                        {
+                            command.CommandText = MakeCommand(arrayIndex);
+                            int result = command.ExecuteNonQuery();
+                            dataSize = arrayIndex = 0;
+                            command.Parameters.Clear();
+                            return result;
+                        };
+
+                        var asyncEnumerator = items.AsAsyncEnumerable().WithCancellation(cancellationToken).GetAsyncEnumerator();
+                        try
+                        {
+                            while (await asyncEnumerator.MoveNextAsync())
+                            {
+                                string variable = "@data" + arrayIndex;
+                                var e = asyncEnumerator.Current;
+
+                                if (object.ReferenceEquals(e, null))
+                                {
+                                    command.Parameters.Add(new SQLiteParameter(variable, DBNull.Value));
+                                }
+                                else
+                                {
+                                    using (var ms = new MemoryStream())
+                                    {
+                                        this.DeltaCreate(ms, e);
+                                        var buffer = ms.ToArray();
+                                        command.Parameters.Add(new SQLiteParameter(variable, buffer));
+                                        dataSize += buffer.Length;
+                                    }
+                                }
+                                arrayIndex++;
+                                if (MAX_SQLITE_COMMAND_PARAMETERS <= arrayIndex || dataSize >= MAX_DATASIZE_BULK_DUMP) Flush(); //limit 999 sqlite / 2MB
+                            }
+                            if (arrayIndex != 0) Flush();
+                        }
+                        finally
+                        {
+                            await asyncEnumerator.DisposeAsync();
+                        }
+                    }
+                }
+                #endregion
+                #region By chunk size
+                else
+                {
+                    int oldLength = 0;
+                    string commandText = null;
+                    await foreach (var chunk in BufferCollection<T>.PartitionAsync(items, 256, cancellationToken))
+                    {
+                        if (chunk.Length != 0)
+                        {
+                            if (chunk.Length != oldLength)
+                                commandText = MakeCommand(oldLength = chunk.Length);
+
+                            using (var command = connection.CreateCommand())
+                            {
+                                command.CommandType = CommandType.Text;
+                                command.CommandText = commandText;
+                                command.Parameters.AddRange(chunk.Select((e, n) =>
+                                {
+                                    string variable = "@data" + n.ToString();
+                                    if (object.ReferenceEquals(e, null))
+                                    {
+                                        return new SQLiteParameter(variable, DBNull.Value);
+                                    }
+                                    else
+                                    {
+                                        using (var ms = new MemoryStream())
+                                        {
+                                            this.DeltaCreate(ms, e);
+                                            //ms.Seek(0, SeekOrigin.Begin);
+                                            return new SQLiteParameter(variable, ms.ToArray());
+                                        }
+                                    }
+                                }).ToArray());
+                                int result = command.ExecuteNonQuery();
+                                command.Parameters.Clear();
+                            }
+                        }
+                    }
+                }
+                #endregion
+
+                return true;
+            });
         }
 
         public void AddRange(IEnumerable<T> items, bool bySize = true)

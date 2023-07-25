@@ -1,8 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
+using static PersistenceList.Engine.AsyncEnumerableExtensions;
 
 namespace PersistenceList
 {
@@ -78,6 +81,34 @@ namespace PersistenceList
                     if (firstElement && !canRead) yield break;
                     yield return output;
                 }
+            }
+        }
+
+        public static async IAsyncEnumerable<T[]> PartitionAsync(IEnumerable<T> items, int partitionSize, [EnumeratorCancellation] CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (items == null || partitionSize <= 0) yield break;
+            var elements = items.AsAsyncEnumerable().WithCancellation(cancellationToken).GetAsyncEnumerator();
+            try
+            {
+                bool firstElement = true;
+                bool canRead = true;
+                while (canRead)
+                {
+                    var output = new T[partitionSize];
+                    for (int i = 0; i < partitionSize; i++)
+                    {
+                        canRead = await elements.MoveNextAsync();
+                        if (!canRead) { Array.Resize(ref output, i); break; }
+                        firstElement = false;
+                        output[i] = elements.Current;
+                    }
+                    if (firstElement && !canRead) yield break;
+                    yield return output;
+                }
+            }
+            finally
+            {
+                await elements.DisposeAsync();
             }
         }
 

@@ -110,6 +110,42 @@ namespace PersistenceList
             t3.Stop();
             Console.WriteLine("size: " + t3.ElapsedMilliseconds);
 
+            var t4 = Stopwatch.StartNew();
+            using (var test = new PersistenceListProtoBuffer<Customer>())
+            {
+                test.AddRangeAsync(dataBuffer, false).Wait();
+                test.Add(null);
+                //var result = test.ToList();
+                //Console.WriteLine(result.Count);
+                int num1 = test.IndexOf(test[3]);
+                int num2 = test.IndexOf(null);
+
+                bool test1 = test.Contains(test[3]);
+                bool test2 = test.Contains(null);
+
+                var test3 = test.Where(e => e.FirstName.StartsWith("A")).Skip(1000).Take(1000).ToList();
+            }
+            t4.Stop();
+            Console.WriteLine("chuck async: " + t4.ElapsedMilliseconds);
+
+            var t5 = Stopwatch.StartNew();
+            using (var test = new PersistenceListProtoBuffer<Customer>())
+            {
+                test.AddRangeAsync(dataBuffer, true).Wait();
+                test.Add(null);
+                //var result = test.ToList();
+                //Console.WriteLine(result.Count);
+                int num1 = test.IndexOf(test[3]);
+                int num2 = test.IndexOf(null);
+
+                bool test1 = test.Contains(test[3]);
+                bool test2 = test.Contains(null);
+
+                var test3 = test.Where(e => e.FirstName.StartsWith("A")).Skip(1000).Take(1000).ToList();
+            }
+            t5.Stop();
+            Console.WriteLine("size async: " + t5.ElapsedMilliseconds);
+
             Console.WriteLine("terminado pulse tecla");
             Console.ReadKey();
         }
