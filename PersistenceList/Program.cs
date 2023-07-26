@@ -146,6 +146,24 @@ namespace PersistenceList
             t5.Stop();
             Console.WriteLine("size async: " + t5.ElapsedMilliseconds);
 
+            var t6 = Stopwatch.StartNew();
+            using (var test = new PersistenceListBSON<Customer>())
+            {
+                test.AddRange(dataBuffer);
+                test.Add(null);
+                //var result = test.ToList();
+                //Console.WriteLine(result.Count);
+                int num1 = test.IndexOf(test[3]);
+                int num2 = test.IndexOf(null);
+
+                bool test1 = test.Contains(test[3]);
+                bool test2 = test.Contains(null);
+
+                var test3 = test.Where(e => e.FirstName.StartsWith("A")).Skip(1000).Take(1000).ToList();
+            }
+            t6.Stop();
+            Console.WriteLine("BSON: " + t6.ElapsedMilliseconds);
+
             Console.WriteLine("terminado pulse tecla");
             Console.ReadKey();
         }
